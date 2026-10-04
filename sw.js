@@ -1,5 +1,5 @@
 /* Network-first, falls back to cache so the app opens offline. */
-var CACHE = "thermocline-v1";
+var CACHE = "thermocline-v2";
 var FILES = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icon.svg"];
 
 self.addEventListener("install", function(e){
