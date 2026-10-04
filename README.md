@@ -17,7 +17,3 @@ On a phone, open the link and use **Add to Home Screen** to install it like an a
 ## Run locally
 
 Open `index.html` in a browser, or run `python3 -m http.server` in this folder.
-
-## Your existing sessions
-
-`sessions.seed.json` holds the sessions from your original file. Open the site and tap **Import log** to load them. If the repository is public, don't commit that file, because your notes would be visible to anyone.

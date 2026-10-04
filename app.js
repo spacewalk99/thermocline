@@ -6,7 +6,7 @@
   var LS_STATE_KEY = "thermocline:state";
   var LS_SETTINGS_KEY = "thermocline:settings";
   var LS_TIMER_KEY = "thermocline:timer";
-  var GOAL_OPTIONS = [0, 60, 120, 180, 300, 600, 900];
+  var GOAL_OPTIONS = [0, 60, 120, 180, 300, 480, 600, 900];
   var FEELINGS = [
     { id: "rough", label: "Rough", emoji: "\u{1F616}" },
     { id: "okay",  label: "Okay",  emoji: "\u{1F610}" },
@@ -324,6 +324,15 @@
     renderApp();
   }
 
+  function clearAllData(){
+    if (!window.confirm("Delete all " + STATE.sessions.length + " sessions? This can't be undone. Export first if you want a copy.")) return;
+    if (ui.timerRunning) endTimer();
+    clearTimer();
+    ui.chartTooltip = null;
+    ui.sheet = null;
+    persist({ v: 1, sessions: [] }, true);
+  }
+
   function importData(file){
     var reader = new FileReader();
     reader.onload = function(){
@@ -370,18 +379,20 @@
     var ctx = getAudio();
     if (!ctx) return;
     var t0 = ctx.currentTime + 0.02;
-    [0, 0.28, 0.56].forEach(function(off, i){
+    /* ten pulses, about 5 seconds, alternating two notes */
+    for (var i = 0; i < 10; i++){
+      var off = i * 0.5;
       var osc = ctx.createOscillator(), gain = ctx.createGain();
       osc.type = "sine";
-      osc.frequency.value = i === 2 ? 1175 : 880;
+      osc.frequency.value = i % 2 === 0 ? 880 : 1175;
       gain.gain.setValueAtTime(0.0001, t0 + off);
-      gain.gain.exponentialRampToValueAtTime(0.5, t0 + off + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + off + 0.22);
+      gain.gain.exponentialRampToValueAtTime(0.5, t0 + off + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + off + 0.4);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start(t0 + off);
-      osc.stop(t0 + off + 0.25);
-    });
+      osc.stop(t0 + off + 0.45);
+    }
   }
 
   function canVibrate(){ return typeof navigator.vibrate === "function"; }
@@ -389,7 +400,7 @@
   function fireAlert(){
     if (SETTINGS.sound) beep();
     if (SETTINGS.vibrate && canVibrate()){
-      try { navigator.vibrate([300, 150, 300, 150, 500]); } catch (e) {}
+      try { navigator.vibrate([400, 200, 400, 200, 400, 200, 400, 200, 400, 200, 700]); } catch (e) {}
     }
   }
 
@@ -944,6 +955,7 @@
           '<input type="file" id="importFile" accept="application/json,.json" hidden>' +
         '</div>' +
         '<p class="backup-note">Your log is stored in this browser only. Export now and then to keep a copy.</p>' +
+        (STATE.sessions.length ? '<button type="button" class="btn-ghost danger wipe-btn" data-action="clear-data">Delete all sessions</button>' : '') +
       '</section>'
     );
   }
@@ -1073,6 +1085,7 @@
       case "weekly-goal-inc": SETTINGS.weeklyGoal = Math.min(7, SETTINGS.weeklyGoal + 1); saveSettings(); renderApp(); break;
       case "snooze-backup": SETTINGS.snoozeUntil = Date.now() + 3 * 86400000; saveSettings(); renderApp(); break;
       case "export-data": exportData(); break;
+      case "clear-data": clearAllData(); break;
       case "import-data": document.getElementById("importFile").click(); break;
       case "edit-session": openEdit(t.getAttribute("data-id")); break;
       case "delete-session": requestDelete(t.getAttribute("data-id")); break;

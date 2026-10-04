@@ -139,3 +139,4 @@ input[type="date"]{min-height:44px;}
 .backup-notice p{margin:0;}
 .notice-actions{display:flex; gap:8px;}
 .notice-btn{padding:7px 14px; font-size:12px; font-weight:600; border:1px solid var(--line); color:var(--ink); background:var(--surface);}
+.wipe-btn{margin-top:14px; text-align:left; padding-left:0;}
