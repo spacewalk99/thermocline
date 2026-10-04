@@ -1,6 +1,6 @@
 /* Network-first, falls back to cache so the app opens offline. */
-var CACHE = "thermocline-v2";
-var FILES = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icon.svg"];
+var CACHE = "thermocline-v3";
+var FILES = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png", "apple-touch-icon.png"];
 
 self.addEventListener("install", function(e){
   e.waitUntil(caches.open(CACHE).then(function(c){ return c.addAll(FILES); }));

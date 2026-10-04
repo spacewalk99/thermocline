@@ -1,1 +1,59 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#081821"/><polygon points="156,140 330,140 372,182 372,372 182,372 140,330 140,156" fill="#57d2ec" transform="translate(0,0)"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="75%">
+      <stop offset="0" stop-color="#1a7a9c"/>
+      <stop offset="0.55" stop-color="#0c3a4e"/>
+      <stop offset="1" stop-color="#061219"/>
+    </radialGradient>
+    <linearGradient id="lens" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1c26"/>
+      <stop offset="0.55" stop-color="#14566f"/>
+      <stop offset="1" stop-color="#57d2ec"/>
+    </linearGradient>
+    <linearGradient id="fur" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dcecf3"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#bg)"/>
+
+  <!-- ice water at the bottom -->
+  <path d="M0 430 Q64 408 128 430 T256 430 T384 430 T512 430 V512 H0 Z" fill="#57d2ec" opacity="0.22"/>
+  <path d="M0 462 Q64 442 128 462 T256 462 T384 462 T512 462 V512 H0 Z" fill="#57d2ec" opacity="0.28"/>
+
+  <!-- sparkles -->
+  <path d="M96 84 l6 18 18 6 -18 6 -6 18 -6 -18 -18 -6 18 -6z" fill="#8fe3f5"/>
+  <path d="M424 70 l4 12 12 4 -12 4 -4 12 -4 -12 -12 -4 12 -4z" fill="#8fe3f5" opacity="0.85"/>
+  <path d="M440 190 l3 9 9 3 -9 3 -3 9 -3 -9 -9 -3 9 -3z" fill="#ffffff" opacity="0.6"/>
+
+  <!-- ears -->
+  <circle cx="148" cy="152" r="50" fill="#f1f8fb"/>
+  <circle cx="148" cy="154" r="25" fill="#a9cbd8"/>
+  <circle cx="364" cy="152" r="50" fill="#f1f8fb"/>
+  <circle cx="364" cy="154" r="25" fill="#a9cbd8"/>
+
+  <!-- head -->
+  <ellipse cx="256" cy="272" rx="152" ry="140" fill="url(#fur)"/>
+
+  <!-- snout -->
+  <ellipse cx="256" cy="336" rx="78" ry="58" fill="#e4f1f6"/>
+  <ellipse cx="256" cy="310" rx="27" ry="19" fill="#0a2436"/>
+  <ellipse cx="248" cy="304" rx="8" ry="4" fill="#ffffff" opacity="0.45"/>
+  <path d="M256 326 V346 M256 346 Q236 368 214 352 M256 346 Q276 368 298 352" fill="none" stroke="#0a2436" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- cheeks -->
+  <circle cx="160" cy="316" r="16" fill="#9fd9e8" opacity="0.35"/>
+  <circle cx="352" cy="316" r="16" fill="#9fd9e8" opacity="0.35"/>
+
+  <!-- sunglasses: arms, bridge, lenses -->
+  <path d="M138 226 L112 220 M374 226 L400 220" stroke="#05121a" stroke-width="9" stroke-linecap="round"/>
+  <path d="M242 226 Q256 214 270 226" fill="none" stroke="#05121a" stroke-width="9" stroke-linecap="round"/>
+  <path d="M136 214 H246 V248 Q246 286 210 286 H172 Q136 286 136 248 Z" fill="url(#lens)" stroke="#05121a" stroke-width="9" stroke-linejoin="round"/>
+  <path d="M266 214 H376 V248 Q376 286 340 286 H302 Q266 286 266 248 Z" fill="url(#lens)" stroke="#05121a" stroke-width="9" stroke-linejoin="round"/>
+  <!-- lens glints -->
+  <path d="M164 226 L190 226 L166 262 L152 262 Z" fill="#ffffff" opacity="0.5"/>
+  <path d="M196 226 L204 226 L186 252 L178 252 Z" fill="#ffffff" opacity="0.35"/>
+  <path d="M294 226 L320 226 L296 262 L282 262 Z" fill="#ffffff" opacity="0.5"/>
+  <path d="M326 226 L334 226 L316 252 L308 252 Z" fill="#ffffff" opacity="0.35"/>
+</svg>
