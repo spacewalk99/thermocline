@@ -140,3 +140,40 @@ input[type="date"]{min-height:44px;}
 .notice-actions{display:flex; gap:8px;}
 .notice-btn{padding:7px 14px; font-size:12px; font-weight:600; border:1px solid var(--line); color:var(--ink); background:var(--surface);}
 .wipe-btn{margin-top:14px; text-align:left; padding-left:0;}
+/* depth tint: the page gets deeper as total time grows */
+:root{--depth-tint:transparent;}
+:root[data-depth="1"]{--depth-tint:rgba(87,210,236,0.12);}
+:root[data-depth="2"]{--depth-tint:rgba(15,127,163,0.18);}
+:root[data-depth="3"]{--depth-tint:rgba(8,70,104,0.24);}
+:root[data-depth="4"]{--depth-tint:rgba(4,30,56,0.32);}
+body{background:linear-gradient(180deg,var(--depth-tint) 0,transparent 360px),var(--bg);}
+/* mascot */
+.mascot{display:flex; align-items:center; gap:12px; margin-bottom:-4px;}
+.mascot-art{flex-shrink:0; width:88px;}
+.bear{display:block; width:88px; height:auto; overflow:hidden;}
+.bubble{flex:1; background:var(--surface); border:1px solid var(--line); padding:12px 14px; min-width:0;}
+.bubble p{margin:0;}
+.bubble-main{font-weight:600; font-size:15px;}
+.bubble-sub{margin-top:3px !important; font-size:12px; color:var(--ink-soft);}
+/* depth */
+.depth-card{background:var(--surface); border:1px solid var(--line); padding:14px 16px;}
+.depth-head{display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:10px;}
+.depth-head .section-label{margin-bottom:4px;}
+.depth-name{margin:0; font-family:'Big Shoulders Display',sans-serif; font-weight:800; font-size:26px; line-height:1;}
+.depth-m{margin:0; display:flex; align-items:baseline; gap:6px;}
+.depth-gauge{height:8px; background:var(--surface-frost); border:1px solid var(--line);}
+.depth-gauge i{display:block; height:100%; background:var(--accent);}
+.depth-note{margin:8px 0 0; font-size:12px; color:var(--ink-soft);}
+/* records */
+.rec-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:8px;}
+.rec-tile{--cut:10px; background:var(--surface); border:1px solid var(--line); padding:12px 10px; min-width:0;}
+.rec-tile p{margin:0;}
+.rec-icon{display:block; font-size:18px; margin-bottom:6px;}
+.rec-value{font-family:'Big Shoulders Display',sans-serif; font-weight:700; font-size:22px; line-height:1; font-variant-numeric:tabular-nums;}
+.rec-tile .stat-label{margin-top:5px;}
+/* breathing guide */
+.breathe{position:relative; height:132px; margin:0 0 14px; display:flex; align-items:center; justify-content:center;}
+.breathe-ring{position:absolute; width:120px; height:120px; border-radius:50%; border:3px solid var(--accent); background:radial-gradient(circle, rgba(87,210,236,0.28), rgba(87,210,236,0.05)); transform:scale(0.55); animation:breathe 10s ease-in-out infinite;}
+.breathe-text{position:relative; margin:0; font-family:'Big Shoulders Display',sans-serif; font-weight:700; font-size:20px;}
+@keyframes breathe{0%{transform:scale(0.55);} 40%{transform:scale(1);} 100%{transform:scale(0.55);}}
+@media (prefers-reduced-motion:reduce){ .breathe-ring{animation:none; transform:scale(0.8);} }

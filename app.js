@@ -7,6 +7,16 @@
   var LS_SETTINGS_KEY = "thermocline:settings";
   var LS_TIMER_KEY = "thermocline:timer";
   var GOAL_OPTIONS = [0, 60, 120, 180, 300, 480, 600, 900];
+  var BREATHE_MS = 30000;   /* guide runs for the first 30 seconds */
+  var BREATHE_CYCLE = 10000; /* 4s in, 6s out */
+  /* depth: every minute in the water is one metre */
+  var LEVELS = [
+    { name: "Surface",  at: 0 },
+    { name: "Shallows", at: 20 },
+    { name: "Deep",     at: 120 },
+    { name: "Abyss",    at: 480 },
+    { name: "Trench",   at: 1440 }
+  ];
   var FEELINGS = [
     { id: "rough", label: "Rough", emoji: "\u{1F616}" },
     { id: "okay",  label: "Okay",  emoji: "\u{1F610}" },
@@ -39,6 +49,9 @@
   var syncNotice = null;
 
   var ui = {
+    breatheStart: 0,
+    celebrateUntil: 0,
+    celebrateMsg: "",
     timerGoalSec: 0,
     timerAlerted: false,
     badgeNotice: null,
@@ -130,18 +143,25 @@
   }
 
   /* ---------- stats ---------- */
+  function dayDiff(fromISO, toDate){
+    var a = new Date(fromISO + "T00:00:00");
+    var b = new Date(localDateStr(toDate) + "T00:00:00");
+    return Math.max(0, Math.round((b - a) / 86400000));
+  }
+
   function computeStats(sessions){
     var dateSet = {};
     var totalSec = 0;
     var longestSec = 0;
     var coldestC = null; /* coldest water temp, counting dips of 1 min or more */
+    var longestSession = null, coldestSession = null;
     for (var i = 0; i < sessions.length; i++){
       var ss = sessions[i];
       dateSet[ss.dateISO] = true;
       totalSec += ss.durationSec || 0;
-      if ((ss.durationSec || 0) > longestSec) longestSec = ss.durationSec;
+      if ((ss.durationSec || 0) > longestSec){ longestSec = ss.durationSec; longestSession = ss; }
       if (ss.tempC != null && !isNaN(ss.tempC) && (ss.durationSec || 0) >= 60){
-        if (coldestC === null || ss.tempC < coldestC) coldestC = ss.tempC;
+        if (coldestC === null || ss.tempC < coldestC){ coldestC = ss.tempC; coldestSession = ss; }
       }
     }
     var dates = Object.keys(dateSet).sort();
@@ -177,6 +197,9 @@
       longestStreak: longest,
       longestSec: longestSec,
       coldestC: coldestC,
+      longestSession: longestSession,
+      coldestSession: coldestSession,
+      daysSince: dates.length ? dayDiff(dates[dates.length - 1], new Date()) : null,
       activeDates: dateSet
     };
   }
@@ -211,11 +234,41 @@
     }
   }
 
-  function earnedMap(sessions){
-    var stats = computeStats(sessions);
-    var out = {};
-    BADGES.forEach(function(b){ out[b.id] = badgeInfo(b, stats).earned; });
-    return out;
+  function depthInfo(totalSec){
+    var m = Math.floor(totalSec / 60), idx = 0;
+    for (var i = 0; i < LEVELS.length; i++) if (m >= LEVELS[i].at) idx = i;
+    return { m: m, index: idx, level: LEVELS[idx], next: LEVELS[idx + 1] || null };
+  }
+
+  function weekCountOf(stats){
+    var today = new Date(), dow = (today.getDay() + 6) % 7, n = 0;
+    for (var i = 0; i < 7; i++) if (stats.activeDates[localDateStr(addDays(today, i - dow))]) n++;
+    return n;
+  }
+
+  function snapshot(sessions){
+    var st = computeStats(sessions), earned = {};
+    BADGES.forEach(function(b){ earned[b.id] = badgeInfo(b, st).earned; });
+    return { stats: st, earned: earned, level: depthInfo(st.totalSec).index, n: sessions.length };
+  }
+
+  function celebrations(before, after){
+    var items = [], kind = "";
+    BADGES.forEach(function(b){
+      if (after.earned[b.id] && !before.earned[b.id]) items.push("\u{1F3C5} New badge: " + badgeName(b));
+    });
+    if (items.length) kind = "badge";
+    var recs = [];
+    if (before.n > 0){
+      var bs = before.stats, as = after.stats;
+      if (as.longestSec > bs.longestSec) recs.push("\u{1F3C6} New record: longest dip " + fmtDurationLong(as.longestSec));
+      if (bs.coldestC !== null && as.coldestC !== null && as.coldestC < bs.coldestC) recs.push("\u{1F3C6} New record: coldest dip " + tempDisplay(as.coldestC, ui.unit));
+      if (as.longestStreak > bs.longestStreak && as.longestStreak >= 3) recs.push("\u{1F3C6} New record: " + as.longestStreak + "-day streak");
+    }
+    var lvl = after.level > before.level ? ["\u{1F30A} New depth: " + LEVELS[after.level].name] : [];
+    if (lvl.length) kind = "level";
+    if (recs.length) kind = "record";
+    return { items: recs.concat(lvl, items), kind: kind };
   }
 
   function last14(activeDates){
@@ -258,7 +311,7 @@
   }
 
   function loadSettings(){
-    var d = { goalSec: 0, sound: true, vibrate: true, weeklyGoal: 3, lastBackup: 0, snoozeUntil: 0 };
+    var d = { goalSec: 0, sound: true, vibrate: true, weeklyGoal: 3, lastBackup: 0, snoozeUntil: 0, breathe: true };
     try {
       var r = JSON.parse(localStorage.getItem(LS_SETTINGS_KEY) || "null");
       if (r && typeof r === "object") for (var k in d) if (r[k] !== undefined) d[k] = r[k];
@@ -283,12 +336,17 @@
 
   function dismissBadgeNotice(){
     ui.badgeNotice = null;
-    var el = document.querySelector(".badge-notice");
-    if (el && el.parentNode) el.parentNode.removeChild(el);
+    ui.celebrateUntil = 0;
+    if (!ui.sheet && !ui.timerRunning){
+      renderApp();
+    } else {
+      var el = document.querySelector(".badge-notice");
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    }
   }
 
   function persist(newState, silent){
-    var before = silent ? null : earnedMap(STATE.sessions);
+    var before = silent ? null : snapshot(STATE.sessions);
     STATE = newState;
     try {
       localStorage.setItem(LS_STATE_KEY, JSON.stringify(STATE));
@@ -297,10 +355,11 @@
       syncNotice = "Couldn't save to this browser. Export a backup so you don't lose your log.";
     }
     if (before){
-      var after = earnedMap(STATE.sessions);
-      var fresh = BADGES.filter(function(b){ return after[b.id] && !before[b.id]; });
-      if (fresh.length){
-        ui.badgeNotice = "\u{1F3C5} New badge" + (fresh.length > 1 ? "s" : "") + ": " + fresh.map(badgeName).join(", ");
+      var c = celebrations(before, snapshot(STATE.sessions));
+      if (c.items.length){
+        ui.badgeNotice = c.items;
+        ui.celebrateUntil = Date.now() + 8000;
+        ui.celebrateMsg = c.kind === "record" ? "New record. Look at you." : c.kind === "level" ? "Deeper water. Nice." : "Badge unlocked!";
         if (badgeTimeout) clearTimeout(badgeTimeout);
         badgeTimeout = setTimeout(dismissBadgeNotice, 8000);
       }
@@ -426,11 +485,23 @@
     try { localStorage.removeItem(LS_TIMER_KEY); } catch (e) {}
   }
 
+  function breatheActive(){ return ui.breatheStart > 0 && Date.now() - ui.breatheStart < BREATHE_MS; }
+  function breatheText(){ return ((Date.now() - ui.breatheStart) % BREATHE_CYCLE) < 4000 ? "Breathe in" : "Breathe out"; }
+
   function tick(){
     if (!ui.timerRunning) return;
     ui.timerElapsed = Math.floor((Date.now() - ui.timerStart) / 1000);
     var el = document.getElementById("timerDigits");
     if (el) el.textContent = fmtClock(ui.timerElapsed);
+    if (ui.breatheStart){
+      if (!breatheActive()){
+        ui.breatheStart = 0;
+        renderApp();
+      } else {
+        var bt = document.getElementById("breatheText");
+        if (bt) bt.textContent = breatheText();
+      }
+    }
     if (ui.timerGoalSec){
       var bar = document.getElementById("timerBar");
       if (bar) bar.style.width = Math.min(100, ui.timerElapsed / ui.timerGoalSec * 100) + "%";
@@ -455,6 +526,7 @@
     ui.timerElapsed = 0;
     ui.timerGoalSec = SETTINGS.goalSec || 0;
     ui.timerAlerted = false;
+    ui.breatheStart = SETTINGS.breathe ? Date.now() : 0;
     saveTimer();
     holdScreen();
     renderApp();
@@ -470,6 +542,7 @@
     ui.timerStart = raw.start;
     ui.timerGoalSec = raw.goalSec || 0;
     ui.timerAlerted = !!raw.alerted;
+    ui.breatheStart = 0;
     ui.timerElapsed = Math.floor((Date.now() - raw.start) / 1000);
     holdScreen();
     beginTicking();
@@ -479,6 +552,7 @@
     if (tickHandle){ clearInterval(tickHandle); tickHandle = null; }
     var elapsed = Math.max(1, Math.floor((Date.now() - ui.timerStart) / 1000));
     ui.timerRunning = false;
+    ui.breatheStart = 0;
     clearTimer();
     releaseScreen();
     return elapsed;
@@ -635,9 +709,124 @@
         '<div class="notice-actions"><button type="button" class="notice-btn" data-action="export-data">Export</button>' +
         '<button type="button" class="notice-btn" data-action="snooze-backup">Later</button></div></div>';
     }
-    if (ui.badgeNotice) out += '<div class="notice badge-notice" data-action="dismiss-notice" role="status">' + escapeHtml(ui.badgeNotice) + '</div>';
+    if (ui.badgeNotice) out += '<div class="notice badge-notice" data-action="dismiss-notice" role="status">' + ui.badgeNotice.map(escapeHtml).join("<br>") + '</div>';
     if (syncNotice) out += '<div class="notice">' + escapeHtml(syncNotice) + '</div>';
     return out;
+  }
+
+  function bearSvg(mood, winter){
+    var o = [];
+    o.push('<svg viewBox="84 12 344 468" width="88" class="bear" role="presentation" focusable="false" xmlns="http://www.w3.org/2000/svg">');
+    o.push('<defs><linearGradient id="mb-fur" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#dcecf3"/></linearGradient>' +
+           '<linearGradient id="mb-lens" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0b1c26"/><stop offset="0.55" stop-color="#14566f"/><stop offset="1" stop-color="#57d2ec"/></linearGradient></defs>');
+    var line = ' stroke="#9fc3d1" stroke-width="3"';
+    o.push('<circle cx="148" cy="152" r="50" fill="#f1f8fb"' + line + '/><circle cx="148" cy="154" r="25" fill="#a9cbd8"/>');
+    o.push('<circle cx="364" cy="152" r="50" fill="#f1f8fb"' + line + '/><circle cx="364" cy="154" r="25" fill="#a9cbd8"/>');
+    o.push('<ellipse cx="256" cy="272" rx="152" ry="140" fill="url(#mb-fur)"' + line + '/>');
+    o.push('<ellipse cx="256" cy="336" rx="78" ry="58" fill="#e4f1f6"/>');
+    o.push('<ellipse cx="256" cy="310" rx="27" ry="19" fill="#0a2436"/><ellipse cx="248" cy="304" rx="8" ry="4" fill="#fff" opacity="0.45"/>');
+    o.push('<circle cx="160" cy="316" r="16" fill="#9fd9e8" opacity="0.4"/><circle cx="352" cy="316" r="16" fill="#9fd9e8" opacity="0.4"/>');
+    if (mood === "party"){
+      o.push('<path d="M226 348 Q256 400 286 348 Z" fill="#0a2436"/><ellipse cx="256" cy="372" rx="14" ry="9" fill="#e8645a"/><path d="M256 326 V348" stroke="#0a2436" stroke-width="7" stroke-linecap="round"/>');
+    } else if (mood === "sleepy"){
+      o.push('<path d="M256 326 V342 M240 352 Q256 358 272 352" fill="none" stroke="#0a2436" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>');
+    } else {
+      o.push('<path d="M256 326 V346 M256 346 Q236 368 214 352 M256 346 Q276 368 298 352" fill="none" stroke="#0a2436" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>');
+    }
+    if (winter){
+      o.push('<path d="M130 386 Q256 426 382 386 L394 428 Q256 472 118 428 Z" fill="#e8645a"/><path d="M122 410 Q256 454 390 410" fill="none" stroke="#f6a39b" stroke-width="8"/>');
+    }
+    if (mood === "sleepy"){
+      o.push('<path d="M164 246 Q190 268 216 246 M296 246 Q322 268 348 246" fill="none" stroke="#0a2436" stroke-width="8" stroke-linecap="round"/>');
+      o.push('<text x="368" y="150" font-family="sans-serif" font-size="56" font-weight="800" fill="#57d2ec">z</text><text x="404" y="110" font-family="sans-serif" font-size="38" font-weight="800" fill="#8fe3f5">z</text>');
+    } else {
+      o.push('<path d="M138 226 L112 220 M374 226 L400 220" stroke="#05121a" stroke-width="9" stroke-linecap="round"/><path d="M242 226 Q256 214 270 226" fill="none" stroke="#05121a" stroke-width="9" stroke-linecap="round"/>');
+      o.push('<path d="M136 214 H246 V248 Q246 286 210 286 H172 Q136 286 136 248 Z" fill="url(#mb-lens)" stroke="#05121a" stroke-width="9" stroke-linejoin="round"/>');
+      o.push('<path d="M266 214 H376 V248 Q376 286 340 286 H302 Q266 286 266 248 Z" fill="url(#mb-lens)" stroke="#05121a" stroke-width="9" stroke-linejoin="round"/>');
+      o.push('<path d="M164 226 L190 226 L166 262 L152 262 Z M294 226 L320 226 L296 262 L282 262 Z" fill="#fff" opacity="0.5"/>');
+    }
+    if (mood === "party"){
+      o.push('<path d="M256 34 L212 150 L300 150 Z" fill="#57d2ec" stroke="#0f7fa3" stroke-width="4" stroke-linejoin="round"/><path d="M224 118 L288 118" stroke="#fff" stroke-width="8" opacity="0.7"/><circle cx="256" cy="32" r="13" fill="#fff"/>');
+      o.push('<circle cx="110" cy="120" r="9" fill="#e8645a"/><circle cx="408" cy="132" r="9" fill="#f2c94c"/><circle cx="96" cy="300" r="8" fill="#57d2ec"/><circle cx="418" cy="296" r="8" fill="#e8645a"/><rect x="392" y="64" width="16" height="16" fill="#8fe3f5" transform="rotate(25 400 72)"/><rect x="104" y="190" width="14" height="14" fill="#f2c94c" transform="rotate(-20 111 197)"/>');
+    }
+    if (mood === "proud"){
+      o.push('<path d="M104 96 l7 21 21 7 -21 7 -7 21 -7 -21 -21 -7 21 -7z" fill="#57d2ec"/><path d="M412 86 l5 15 15 5 -15 5 -5 15 -5 -15 -15 -5 15 -5z" fill="#8fe3f5"/><path d="M420 300 l4 11 11 4 -11 4 -4 11 -4 -11 -11 -4 11 -4z" fill="#8fe3f5" opacity="0.8"/>');
+    }
+    if (mood === "plunge"){
+      o.push('<path d="M60 334 Q120 314 180 334 T300 334 T420 334 T540 334 V500 H60 Z" fill="#57d2ec" opacity="0.5"/><path d="M60 352 Q120 334 180 352 T300 352 T420 352 T540 352 V500 H60 Z" fill="#0f7fa3" opacity="0.45"/>');
+      o.push('<path d="M92 214 q-12 14 0 28 q12 14 0 28 M420 214 q12 14 0 28 q-12 14 0 28" fill="none" stroke="#8fe3f5" stroke-width="6" stroke-linecap="round"/><circle cx="338" cy="300" r="8" fill="none" stroke="#fff" stroke-width="4" opacity="0.8"/><circle cx="356" cy="278" r="5" fill="none" stroke="#fff" stroke-width="3" opacity="0.7"/>');
+    }
+    o.push('</svg>');
+    return o.join("");
+  }
+
+  function mascotTpl(stats){
+    var mood, line, sub = "";
+    var m = new Date().getMonth(); /* scarf season: Nov to Mar */
+    var winter = m >= 10 || m <= 2;
+    if (ui.timerRunning){
+      mood = "plunge";
+      line = ui.timerAlerted ? "Goal reached. Nice work." : "In the water.";
+      sub = "Steady breaths, long exhale.";
+    } else if (ui.celebrateUntil > Date.now()){
+      mood = "party";
+      line = ui.celebrateMsg;
+    } else if (!STATE.sessions.length){
+      mood = "cool";
+      line = "Ready for your first dip?";
+      sub = "Start the timer, then log it.";
+    } else if (stats.daysSince === 0){
+      mood = "proud";
+      line = stats.currentStreak > 1 ? "Day " + stats.currentStreak + " in a row." : "Nice dip today.";
+      sub = weekCountOf(stats) + " of " + SETTINGS.weeklyGoal + " days this week";
+    } else if (stats.daysSince >= 3){
+      mood = "sleepy";
+      line = "It's been " + stats.daysSince + " days.";
+      sub = "The water's waiting.";
+    } else {
+      mood = "cool";
+      line = "Ready when you are.";
+      sub = "Last dip " + (stats.daysSince === 1 ? "yesterday" : stats.daysSince + " days ago") + ".";
+    }
+    return (
+      '<section class="mascot">' +
+        '<div class="mascot-art" aria-hidden="true">' + bearSvg(mood, winter) + '</div>' +
+        '<div class="bubble facet" role="status">' +
+          '<p class="bubble-main">' + escapeHtml(line) + '</p>' +
+          (sub ? '<p class="bubble-sub">' + escapeHtml(sub) + '</p>' : '') +
+        '</div>' +
+      '</section>'
+    );
+  }
+
+  function depthTpl(stats){
+    var d = depthInfo(stats.totalSec);
+    var pct = d.next ? Math.round((d.m - d.level.at) / (d.next.at - d.level.at) * 100) : 100;
+    return (
+      '<section class="depth-card facet">' +
+        '<div class="depth-head">' +
+          '<div><p class="section-label">Depth</p><p class="depth-name">' + d.level.name + '</p></div>' +
+          '<p class="depth-m"><span class="stat-value">' + d.m + '</span> <span class="stat-unit">m</span></p>' +
+        '</div>' +
+        '<div class="depth-gauge" role="img" aria-label="' + pct + ' percent of the way to the next depth"><i style="width:' + pct + '%"></i></div>' +
+        '<p class="depth-note">' + (d.next ? (d.next.at - d.m) + ' m to ' + d.next.name + '. Every minute in the water is one metre deeper.' : 'You have reached the Trench.') + '</p>' +
+      '</section>'
+    );
+  }
+
+  function recordsTpl(stats){
+    var ls = stats.longestSession, cs = stats.coldestSession;
+    function dl(x){ return new Date(x.startedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
+    function tile(icon, label, value, sub){
+      return '<div class="rec-tile facet"><span class="rec-icon" aria-hidden="true">' + icon + '</span><p class="rec-value">' + escapeHtml(value) + '</p><p class="stat-label">' + label + '</p><p class="stat-unit">' + escapeHtml(sub) + '</p></div>';
+    }
+    return (
+      '<section class="records"><p class="section-label">Personal records</p><div class="rec-grid">' +
+        tile("\u23F1\uFE0F", "Longest dip", ls ? fmtDurationLong(ls.durationSec) : "\u2014", ls ? dl(ls) : "no dips yet") +
+        tile("\u2744\uFE0F", "Coldest dip", cs ? tempDisplay(cs.tempC, ui.unit) : "\u2014", cs ? dl(cs) : "needs 1 min+") +
+        tile("\u{1F525}", "Best streak", stats.longestStreak ? stats.longestStreak + (stats.longestStreak === 1 ? " day" : " days") : "\u2014", stats.longestStreak ? "in a row" : "no streak yet") +
+      '</div></section>'
+    );
   }
 
   function goalLabel(sec){ return sec ? (sec / 60) + "m" : "No goal"; }
@@ -651,8 +840,10 @@
         '<section class="timer-card facet running">' +
           '<p class="timer-label">' + label + '</p>' +
           '<p class="timer-digits' + (ui.timerAlerted ? ' reached' : '') + '" id="timerDigits">' + fmtClock(ui.timerElapsed) + '</p>' +
+          (breatheActive() ? '<div class="breathe" id="breathe"><div class="breathe-ring" style="animation-delay:' + (-((Date.now() - ui.breatheStart) % BREATHE_CYCLE)) + 'ms"></div><p class="breathe-text" id="breatheText">' + breatheText() + '</p></div>' : '') +
           (g ? '<div class="timer-bar"><i id="timerBar" style="width:' + pct.toFixed(1) + '%"></i></div>' : '') +
           '<button class="btn btn-stop facet" data-action="stop-timer" type="button">Stop &amp; log</button>' +
+          (breatheActive() ? '' : '<button class="btn-ghost" data-action="start-breathing" type="button">Breathing guide</button>') +
           '<button class="btn-ghost" data-action="discard-timer" type="button">Discard</button>' +
         '</section>'
       );
@@ -664,13 +855,14 @@
     var alertChips =
       '<button type="button" class="goal-chip' + (SETTINGS.sound ? ' active' : '') + '" aria-pressed="' + SETTINGS.sound + '" data-action="toggle-sound">Sound</button>' +
       (canVibrate() ? '<button type="button" class="goal-chip' + (SETTINGS.vibrate ? ' active' : '') + '" aria-pressed="' + SETTINGS.vibrate + '" data-action="toggle-vibrate">Vibrate</button>' : '') +
+      '<button type="button" class="goal-chip' + (SETTINGS.breathe ? ' active' : '') + '" aria-pressed="' + SETTINGS.breathe + '" data-action="toggle-breathe">Breathing</button>' +
       '<button type="button" class="goal-chip" data-action="test-alert">Test alert</button>';
     return (
       '<section class="timer-card facet">' +
         '<p class="timer-label">Ready when you are</p>' +
         '<p class="timer-digits idle">' + fmtClock(SETTINGS.goalSec || 0) + '</p>' +
         '<div class="goal-row" role="group" aria-label="Timer goal">' + chips + '</div>' +
-        '<div class="goal-row" role="group" aria-label="Goal alert">' + alertChips + '</div>' +
+        '<div class="goal-row" role="group" aria-label="Alerts and breathing guide">' + alertChips + '</div>' +
         (canVibrate() ? '' : '<p class="goal-note">Vibration isn&rsquo;t available in this browser, so the goal alert is sound only.</p>') +
         '<button class="btn btn-start facet" data-action="start-timer" type="button">Start plunge</button>' +
         '<button class="btn-ghost" data-action="manual-log" type="button">Log without timer</button>' +
@@ -1044,11 +1236,14 @@
         headerTpl(stats) +
         noticeTpl() +
         '<main class="main">' +
+          mascotTpl(stats) +
           timerTpl() +
           statsTpl(stats) +
+          depthTpl(stats) +
           weeklyTpl(stats) +
           dayStripTpl(stats) +
           chartTpl(STATE.sessions, ui.unit) +
+          recordsTpl(stats) +
           badgesTpl(stats) +
           historyTpl() +
           backupTpl() +
@@ -1061,6 +1256,9 @@
   /* ---------- render ---------- */
   function renderApp(){
     root.innerHTML = pageTpl();
+    if (document.documentElement){
+      document.documentElement.setAttribute("data-depth", String(depthInfo(computeStats(STATE.sessions).totalSec).index));
+    }
     if (ui.sheet){
       var mEl = document.getElementById("fMinutes");
       if (mEl) mEl.focus({ preventScroll: true });
@@ -1077,6 +1275,8 @@
       case "manual-log": openManualLog(); break;
       case "dismiss-notice": dismissBadgeNotice(); break;
       case "set-goal": SETTINGS.goalSec = parseInt(t.getAttribute("data-goal"), 10) || 0; saveSettings(); renderApp(); break;
+      case "toggle-breathe": SETTINGS.breathe = !SETTINGS.breathe; saveSettings(); renderApp(); break;
+      case "start-breathing": ui.breatheStart = Date.now(); renderApp(); break;
       case "toggle-sound": SETTINGS.sound = !SETTINGS.sound; saveSettings(); renderApp(); break;
       case "toggle-vibrate": SETTINGS.vibrate = !SETTINGS.vibrate; saveSettings(); renderApp(); break;
       case "test-alert": fireAlert(); break;
