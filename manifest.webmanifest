@@ -1,0 +1,11 @@
+{
+  "name": "Thermocline",
+  "short_name": "Thermocline",
+  "description": "Cold plunge log",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#081821",
+  "theme_color": "#081821",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
