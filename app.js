@@ -11,31 +11,11 @@
     { id: "great", label: "Great", emoji: "\u{1F929}" }
   ];
 
-  var BADGE_GROUPS = ["Streak", "Longest dip", "Total time", "Cold water", "Sessions"];
-  var BADGES = [
-    { id: "streak3",  group: "Streak", icon: "\u{1F525}", name: "3-day streak",  metric: "longestStreak", target: 3 },
-    { id: "streak7",  group: "Streak", icon: "\u{1F525}", name: "7-day streak",  metric: "longestStreak", target: 7 },
-    { id: "streak30", group: "Streak", icon: "\u{1F525}", name: "30-day streak", metric: "longestStreak", target: 30 },
-    { id: "dip2",  group: "Longest dip", icon: "\u23F1\uFE0F", name: "2 min dip",  metric: "longestSec", target: 120 },
-    { id: "dip5",  group: "Longest dip", icon: "\u23F1\uFE0F", name: "5 min dip",  metric: "longestSec", target: 300 },
-    { id: "dip10", group: "Longest dip", icon: "\u23F1\uFE0F", name: "10 min dip", metric: "longestSec", target: 600 },
-    { id: "total30m", group: "Total time", icon: "\u{1F30A}", name: "30 min total", metric: "totalSec", target: 1800 },
-    { id: "total2h",  group: "Total time", icon: "\u{1F30A}", name: "2 hr total",   metric: "totalSec", target: 7200 },
-    { id: "total10h", group: "Total time", icon: "\u{1F30A}", name: "10 hr total",  metric: "totalSec", target: 36000 },
-    { id: "temp15", group: "Cold water", icon: "\u2744\uFE0F", name: "", metric: "coldestC", target: 15 },
-    { id: "temp10", group: "Cold water", icon: "\u2744\uFE0F", name: "", metric: "coldestC", target: 10 },
-    { id: "temp5",  group: "Cold water", icon: "\u{1F9CA}",     name: "", metric: "coldestC", target: 5 },
-    { id: "sess1",  group: "Sessions", icon: "\u{1F3C5}", name: "First dip", metric: "sessionCount", target: 1 },
-    { id: "sess10", group: "Sessions", icon: "\u{1F3C5}", name: "10 dips",   metric: "sessionCount", target: 10 },
-    { id: "sess50", group: "Sessions", icon: "\u{1F3C5}", name: "50 dips",   metric: "sessionCount", target: 50 }
-  ];
-
   var root = document.getElementById("root");
   var STATE = loadState();
   var syncNotice = null;
 
   var ui = {
-    badgeNotice: null,
     timerRunning: false,
     timerStart: 0,
     timerElapsed: 0,
@@ -52,7 +32,6 @@
 
   var tickHandle = null;
   var confirmTimeout = null;
-  var badgeTimeout = null;
 
   /* ---------- helpers ---------- */
   function pad2(n){ return (n < 10 ? "0" : "") + n; }
@@ -127,16 +106,9 @@
   function computeStats(sessions){
     var dateSet = {};
     var totalSec = 0;
-    var longestSec = 0;
-    var coldestC = null; /* coldest water temp, counting dips of 1 min or more */
     for (var i = 0; i < sessions.length; i++){
-      var ss = sessions[i];
-      dateSet[ss.dateISO] = true;
-      totalSec += ss.durationSec || 0;
-      if ((ss.durationSec || 0) > longestSec) longestSec = ss.durationSec;
-      if (ss.tempC != null && !isNaN(ss.tempC) && (ss.durationSec || 0) >= 60){
-        if (coldestC === null || ss.tempC < coldestC) coldestC = ss.tempC;
-      }
+      dateSet[sessions[i].dateISO] = true;
+      totalSec += sessions[i].durationSec || 0;
     }
     var dates = Object.keys(dateSet).sort();
 
@@ -169,47 +141,8 @@
       totalSec: totalSec,
       currentStreak: current,
       longestStreak: longest,
-      longestSec: longestSec,
-      coldestC: coldestC,
       activeDates: dateSet
     };
-  }
-
-  /* ---------- badges ---------- */
-  function badgeInfo(b, stats){
-    var v, earned, prog;
-    if (b.metric === "coldestC"){
-      v = stats.coldestC;
-      earned = v !== null && v <= b.target;
-      prog = earned ? 1 : 0;
-    } else {
-      v = stats[b.metric] || 0;
-      earned = v >= b.target;
-      prog = Math.min(1, v / b.target);
-    }
-    return { value: v, earned: earned, prog: prog };
-  }
-
-  function badgeName(b){
-    return b.metric === "coldestC" ? tempDisplay(b.target, ui.unit) + " or colder" : b.name;
-  }
-
-  function badgeCaption(b, info){
-    if (info.earned) return "Earned";
-    switch (b.metric){
-      case "longestStreak": return info.value + " / " + b.target + " days";
-      case "sessionCount":  return info.value + " / " + b.target;
-      case "longestSec":    return fmtDurationLong(info.value) + " / " + fmtDurationLong(b.target);
-      case "totalSec":      return fmtTotalTime(info.value) + " / " + fmtTotalTime(b.target);
-      default:              return "Dip 1 min+";
-    }
-  }
-
-  function earnedMap(sessions){
-    var stats = computeStats(sessions);
-    var out = {};
-    BADGES.forEach(function(b){ out[b.id] = badgeInfo(b, stats).earned; });
-    return out;
   }
 
   function last14(activeDates){
@@ -262,29 +195,13 @@
     return { v: 1, sessions: [] };
   }
 
-  function dismissBadgeNotice(){
-    ui.badgeNotice = null;
-    var el = document.querySelector(".badge-notice");
-    if (el && el.parentNode) el.parentNode.removeChild(el);
-  }
-
-  function persist(newState, silent){
-    var before = silent ? null : earnedMap(STATE.sessions);
+  function persist(newState){
     STATE = newState;
     try {
       localStorage.setItem(LS_STATE_KEY, JSON.stringify(STATE));
       syncNotice = null;
     } catch (e) {
       syncNotice = "Couldn't save to this browser. Export a backup so you don't lose your log.";
-    }
-    if (before){
-      var after = earnedMap(STATE.sessions);
-      var fresh = BADGES.filter(function(b){ return after[b.id] && !before[b.id]; });
-      if (fresh.length){
-        ui.badgeNotice = "\u{1F3C5} New badge" + (fresh.length > 1 ? "s" : "") + ": " + fresh.map(badgeName).join(", ");
-        if (badgeTimeout) clearTimeout(badgeTimeout);
-        badgeTimeout = setTimeout(dismissBadgeNotice, 8000);
-      }
     }
     renderApp();
   }
@@ -318,7 +235,7 @@
           }
         });
         merged.sort(function(a, b){ return b.startedAt - a.startedAt; });
-        persist({ v: 1, sessions: merged }, true);
+        persist({ v: 1, sessions: merged });
         syncNotice = "Imported " + added + " session" + (added === 1 ? "" : "s") + ".";
         renderApp();
       } catch (e) {
@@ -389,30 +306,12 @@
     var feeling = feelingEl ? feelingEl.getAttribute("data-feeling") : null;
     var note = (noteEl.value || "").trim().slice(0, 240);
 
-    var dateEl = document.getElementById("fDate");
-    var todayStr = localDateStr(new Date());
-    var dateStr = (dateEl && /^\d{4}-\d{2}-\d{2}$/.test(dateEl.value)) ? dateEl.value : todayStr;
-    if (dateStr > todayStr) dateStr = todayStr;
-    var dp = dateStr.split("-");
-    var now = Date.now();
-    function atDate(h, mi, sec){
-      return Math.min(new Date(+dp[0], +dp[1] - 1, +dp[2], h, mi, sec).getTime(), now);
-    }
-
     var sessions = STATE.sessions.slice();
 
     if (ui.sheet.mode === "edit"){
       for (var i = 0; i < sessions.length; i++){
         if (sessions[i].id === ui.sheet.id){
-          var old = sessions[i];
-          var startedAt = old.startedAt;
-          if (dateStr !== old.dateISO){
-            var od = new Date(old.startedAt);
-            startedAt = atDate(od.getHours(), od.getMinutes(), od.getSeconds());
-          }
-          sessions[i] = Object.assign({}, old, {
-            startedAt: startedAt,
-            dateISO: dateStr,
+          sessions[i] = Object.assign({}, sessions[i], {
             durationSec: durationSec,
             tempC: tempC,
             feeling: feeling,
@@ -422,18 +321,19 @@
         }
       }
     } else {
-      var newStart = (dateStr === todayStr) ? now - durationSec * 1000 : atDate(12, 0, 0);
+      var now = Date.now();
+      var startedAt = now - durationSec * 1000;
       sessions.unshift({
         id: uid(),
-        startedAt: newStart,
-        dateISO: dateStr,
+        startedAt: startedAt,
+        dateISO: localDateStr(new Date(startedAt)),
         durationSec: durationSec,
         tempC: tempC,
         feeling: feeling,
         note: note
       });
+      sessions.sort(function(a, b){ return b.startedAt - a.startedAt; });
     }
-    sessions.sort(function(a, b){ return b.startedAt - a.startedAt; });
 
     ui.sheet = null;
     persist({ v: 1, sessions: sessions });
@@ -473,10 +373,8 @@
   }
 
   function noticeTpl(){
-    var out = "";
-    if (ui.badgeNotice) out += '<div class="notice badge-notice" data-action="dismiss-notice" role="status">' + escapeHtml(ui.badgeNotice) + '</div>';
-    if (syncNotice) out += '<div class="notice">' + escapeHtml(syncNotice) + '</div>';
-    return out;
+    if (!syncNotice) return "";
+    return '<div class="notice">' + escapeHtml(syncNotice) + '</div>';
   }
 
   function timerTpl(){
@@ -646,53 +544,6 @@
     );
   }
 
-  function badgesTpl(stats){
-    var infos = {}, earnedCount = 0, next = null;
-    BADGES.forEach(function(b){
-      var info = badgeInfo(b, stats);
-      infos[b.id] = info;
-      if (info.earned) earnedCount++;
-      else if (b.metric !== "coldestC" && (!next || info.prog > next.info.prog)) next = { b: b, info: info };
-    });
-
-    var nextTpl = "";
-    if (next && earnedCount < BADGES.length){
-      nextTpl = (
-        '<div class="next-up facet">' +
-          '<span class="badge-icon next-icon" aria-hidden="true">' + next.b.icon + '</span>' +
-          '<div class="next-text">' +
-            '<span class="next-title">Next badge: ' + escapeHtml(badgeName(next.b)) + '</span>' +
-            '<span class="badge-cap">' + escapeHtml(badgeCaption(next.b, next.info)) + '</span>' +
-            '<span class="badge-bar"><i style="width:' + Math.round(next.info.prog * 100) + '%"></i></span>' +
-          '</div>' +
-        '</div>'
-      );
-    }
-
-    var groups = BADGE_GROUPS.map(function(g){
-      var tiles = BADGES.filter(function(b){ return b.group === g; }).map(function(b){
-        var info = infos[b.id];
-        return (
-          '<div class="badge facet' + (info.earned ? ' earned' : '') + '" role="listitem" aria-label="' + escapeHtml(badgeName(b)) + (info.earned ? ', earned' : ', not yet earned') + '">' +
-            '<span class="badge-icon" aria-hidden="true">' + b.icon + '</span>' +
-            '<span class="badge-name">' + escapeHtml(badgeName(b)) + '</span>' +
-            '<span class="badge-cap">' + escapeHtml(badgeCaption(b, info)) + '</span>' +
-            (info.earned ? '' : '<span class="badge-bar"><i style="width:' + Math.round(info.prog * 100) + '%"></i></span>') +
-          '</div>'
-        );
-      }).join("");
-      return '<div class="badge-group"><p class="badge-group-title">' + escapeHtml(g) + '</p><div class="badge-grid" role="list">' + tiles + '</div></div>';
-    }).join("");
-
-    return (
-      '<section class="badges">' +
-        '<p class="section-label">Badges &middot; ' + earnedCount + '/' + BADGES.length + '</p>' +
-        nextTpl +
-        groups +
-      '</section>'
-    );
-  }
-
   function historyTpl(){
     if (STATE.sessions.length === 0){
       return (
@@ -780,8 +631,6 @@
     }
     var note = existing ? existing.note : "";
     var feeling = existing ? existing.feeling : null;
-    var todayStr = localDateStr(new Date());
-    var dateVal = existing ? existing.dateISO : todayStr;
 
     var chips = FEELINGS.map(function(f){
       var pressed = f.id === feeling;
@@ -793,10 +642,6 @@
         '<div class="sheet facet" role="dialog" aria-label="Log a plunge">' +
           '<div class="sheet-handle"></div>' +
           '<h2 class="sheet-title">' + (isEdit ? 'Edit session' : 'Log this plunge') + '</h2>' +
-          '<label class="field">' +
-            '<span class="field-label">Date</span>' +
-            '<input id="fDate" type="date" max="' + todayStr + '" value="' + dateVal + '">' +
-          '</label>' +
           '<div class="field-row">' +
             '<label class="field">' +
               '<span class="field-label">Minutes</span>' +
@@ -842,7 +687,6 @@
           statsTpl(stats) +
           dayStripTpl(stats) +
           chartTpl(STATE.sessions, ui.unit) +
-          badgesTpl(stats) +
           historyTpl() +
           backupTpl() +
         '</main>' +
@@ -868,7 +712,6 @@
       case "start-timer": startTimer(); break;
       case "stop-timer": stopTimer(); break;
       case "manual-log": openManualLog(); break;
-      case "dismiss-notice": dismissBadgeNotice(); break;
       case "export-data": exportData(); break;
       case "import-data": document.getElementById("importFile").click(); break;
       case "edit-session": openEdit(t.getAttribute("data-id")); break;
@@ -900,13 +743,7 @@
             }
           }
           saveUnit(newUnit);
-          if (ui.sheet){
-            document.querySelectorAll(".seg-btn").forEach(function(el){
-              el.classList.toggle("active", el.getAttribute("data-unit") === newUnit);
-            });
-          } else {
-            renderApp();
-          }
+          renderApp();
         }
         break;
       default: break;
