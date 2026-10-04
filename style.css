@@ -122,3 +122,20 @@ input[type="date"]{min-height:44px;}
 .badge.earned .badge-cap{color:var(--good);}
 .badge-bar{display:block; width:100%; height:3px; background:var(--line); margin-top:4px;}
 .badge-bar i{display:block; height:100%; background:var(--accent);}
+.timer-digits.reached{color:var(--good);}
+.timer-bar{height:4px; background:var(--line); margin:-6px 0 18px;}
+.timer-bar i{display:block; height:100%; background:var(--accent);}
+.goal-row{display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin:0 0 12px;}
+.goal-chip{padding:7px 12px; font-size:12px; border:1px solid var(--line); color:var(--ink-soft); background:var(--surface);}
+.goal-chip.active{background:var(--accent); border-color:var(--accent); color:var(--accent-ink);}
+.goal-note{margin:0 0 12px; font-size:11px; color:var(--ink-soft);}
+.week-card{background:var(--surface); border:1px solid var(--line); padding:14px 16px;}
+.week-head{display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:10px;}
+.week-head .section-label{margin-bottom:4px;}
+.week-count{margin:0; display:flex; align-items:baseline; gap:8px;}
+.week-goal{display:flex; gap:6px;}
+.week-goal button{width:36px; height:36px; font-size:18px; border:1px solid var(--line); color:var(--ink); background:var(--surface-frost);}
+.backup-notice{display:flex; flex-direction:column; gap:8px;}
+.backup-notice p{margin:0;}
+.notice-actions{display:flex; gap:8px;}
+.notice-btn{padding:7px 14px; font-size:12px; font-weight:600; border:1px solid var(--line); color:var(--ink); background:var(--surface);}

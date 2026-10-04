@@ -4,6 +4,9 @@
   /* ---------- constants ---------- */
   var LS_UNIT_KEY = "thermocline:unit";
   var LS_STATE_KEY = "thermocline:state";
+  var LS_SETTINGS_KEY = "thermocline:settings";
+  var LS_TIMER_KEY = "thermocline:timer";
+  var GOAL_OPTIONS = [0, 60, 120, 180, 300, 600, 900];
   var FEELINGS = [
     { id: "rough", label: "Rough", emoji: "\u{1F616}" },
     { id: "okay",  label: "Okay",  emoji: "\u{1F610}" },
@@ -32,9 +35,12 @@
 
   var root = document.getElementById("root");
   var STATE = loadState();
+  var SETTINGS = loadSettings();
   var syncNotice = null;
 
   var ui = {
+    timerGoalSec: 0,
+    timerAlerted: false,
     badgeNotice: null,
     timerRunning: false,
     timerStart: 0,
@@ -251,6 +257,19 @@
     try { localStorage.setItem(LS_UNIT_KEY, u); } catch (e) {}
   }
 
+  function loadSettings(){
+    var d = { goalSec: 0, sound: true, vibrate: true, weeklyGoal: 3, lastBackup: 0, snoozeUntil: 0 };
+    try {
+      var r = JSON.parse(localStorage.getItem(LS_SETTINGS_KEY) || "null");
+      if (r && typeof r === "object") for (var k in d) if (r[k] !== undefined) d[k] = r[k];
+    } catch (e) {}
+    return d;
+  }
+
+  function saveSettings(){
+    try { localStorage.setItem(LS_SETTINGS_KEY, JSON.stringify(SETTINGS)); } catch (e) {}
+  }
+
   function loadState(){
     try {
       var raw = localStorage.getItem(LS_STATE_KEY);
@@ -300,6 +319,9 @@
     a.click();
     document.body.removeChild(a);
     setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    SETTINGS.lastBackup = Date.now();
+    saveSettings();
+    renderApp();
   }
 
   function importData(file){
@@ -329,24 +351,137 @@
     reader.readAsText(file);
   }
 
-  /* ---------- timer ---------- */
+  /* ---------- timer, alerts, screen wake lock ---------- */
+  var audioCtx = null;
+  var wakeLock = null;
+
+  function getAudio(){
+    try {
+      if (!audioCtx){
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (AC) audioCtx = new AC();
+      }
+      if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+    } catch (e) {}
+    return audioCtx;
+  }
+
+  function beep(){
+    var ctx = getAudio();
+    if (!ctx) return;
+    var t0 = ctx.currentTime + 0.02;
+    [0, 0.28, 0.56].forEach(function(off, i){
+      var osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = i === 2 ? 1175 : 880;
+      gain.gain.setValueAtTime(0.0001, t0 + off);
+      gain.gain.exponentialRampToValueAtTime(0.5, t0 + off + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + off + 0.22);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t0 + off);
+      osc.stop(t0 + off + 0.25);
+    });
+  }
+
+  function canVibrate(){ return typeof navigator.vibrate === "function"; }
+
+  function fireAlert(){
+    if (SETTINGS.sound) beep();
+    if (SETTINGS.vibrate && canVibrate()){
+      try { navigator.vibrate([300, 150, 300, 150, 500]); } catch (e) {}
+    }
+  }
+
+  function holdScreen(){
+    try {
+      if (navigator.wakeLock && navigator.wakeLock.request){
+        navigator.wakeLock.request("screen").then(function(l){ wakeLock = l; }).catch(function(){});
+      }
+    } catch (e) {}
+  }
+
+  function releaseScreen(){
+    try { if (wakeLock){ wakeLock.release(); wakeLock = null; } } catch (e) {}
+  }
+
+  function saveTimer(){
+    try {
+      localStorage.setItem(LS_TIMER_KEY, JSON.stringify({ start: ui.timerStart, goalSec: ui.timerGoalSec, alerted: ui.timerAlerted }));
+    } catch (e) {}
+  }
+
+  function clearTimer(){
+    try { localStorage.removeItem(LS_TIMER_KEY); } catch (e) {}
+  }
+
+  function tick(){
+    if (!ui.timerRunning) return;
+    ui.timerElapsed = Math.floor((Date.now() - ui.timerStart) / 1000);
+    var el = document.getElementById("timerDigits");
+    if (el) el.textContent = fmtClock(ui.timerElapsed);
+    if (ui.timerGoalSec){
+      var bar = document.getElementById("timerBar");
+      if (bar) bar.style.width = Math.min(100, ui.timerElapsed / ui.timerGoalSec * 100) + "%";
+      if (!ui.timerAlerted && ui.timerElapsed >= ui.timerGoalSec){
+        ui.timerAlerted = true;
+        saveTimer();
+        fireAlert();
+        renderApp();
+      }
+    }
+  }
+
+  function beginTicking(){
+    if (tickHandle) clearInterval(tickHandle);
+    tickHandle = setInterval(tick, 500);
+  }
+
   function startTimer(){
+    getAudio(); /* unlock sound on this tap, browsers require a user gesture */
     ui.timerRunning = true;
     ui.timerStart = Date.now();
     ui.timerElapsed = 0;
+    ui.timerGoalSec = SETTINGS.goalSec || 0;
+    ui.timerAlerted = false;
+    saveTimer();
+    holdScreen();
     renderApp();
-    tickHandle = setInterval(function(){
-      ui.timerElapsed = Math.floor((Date.now() - ui.timerStart) / 1000);
-      var el = document.getElementById("timerDigits");
-      if (el) el.textContent = fmtClock(ui.timerElapsed);
-    }, 500);
+    beginTicking();
   }
 
-  function stopTimer(){
+  /* pick up a dip that was running when the page was closed or reloaded */
+  function resumeTimer(){
+    var raw = null;
+    try { raw = JSON.parse(localStorage.getItem(LS_TIMER_KEY) || "null"); } catch (e) {}
+    if (!raw || typeof raw.start !== "number" || raw.start > Date.now()) return;
+    ui.timerRunning = true;
+    ui.timerStart = raw.start;
+    ui.timerGoalSec = raw.goalSec || 0;
+    ui.timerAlerted = !!raw.alerted;
+    ui.timerElapsed = Math.floor((Date.now() - raw.start) / 1000);
+    holdScreen();
+    beginTicking();
+  }
+
+  function endTimer(){
     if (tickHandle){ clearInterval(tickHandle); tickHandle = null; }
     var elapsed = Math.max(1, Math.floor((Date.now() - ui.timerStart) / 1000));
     ui.timerRunning = false;
+    clearTimer();
+    releaseScreen();
+    return elapsed;
+  }
+
+  function stopTimer(){
+    var elapsed = endTimer();
     ui.sheet = { mode: "new", durationSec: elapsed, id: null };
+    renderApp();
+  }
+
+  function discardTimer(){
+    if (!window.confirm("Discard this dip without logging it?")) return;
+    endTimer();
     renderApp();
   }
 
@@ -472,27 +607,60 @@
     );
   }
 
+  function backupDue(){
+    if (!STATE.sessions.length) return false;
+    var now = Date.now();
+    if (SETTINGS.snoozeUntil > now) return false;
+    return !SETTINGS.lastBackup || now - SETTINGS.lastBackup > 14 * 86400000;
+  }
+
   function noticeTpl(){
     var out = "";
+    if (backupDue()){
+      var days = SETTINGS.lastBackup ? Math.floor((Date.now() - SETTINGS.lastBackup) / 86400000) : null;
+      out += '<div class="notice backup-notice"><p>' +
+        (days === null ? "You haven&rsquo;t backed up your log yet." : "Your last backup was " + days + " days ago.") +
+        ' Export a copy so it can&rsquo;t be lost if your browser clears its data.</p>' +
+        '<div class="notice-actions"><button type="button" class="notice-btn" data-action="export-data">Export</button>' +
+        '<button type="button" class="notice-btn" data-action="snooze-backup">Later</button></div></div>';
+    }
     if (ui.badgeNotice) out += '<div class="notice badge-notice" data-action="dismiss-notice" role="status">' + escapeHtml(ui.badgeNotice) + '</div>';
     if (syncNotice) out += '<div class="notice">' + escapeHtml(syncNotice) + '</div>';
     return out;
   }
 
+  function goalLabel(sec){ return sec ? (sec / 60) + "m" : "No goal"; }
+
   function timerTpl(){
     if (ui.timerRunning){
+      var g = ui.timerGoalSec;
+      var label = g ? (ui.timerAlerted ? "Goal reached" : "Goal " + fmtClock(g)) : "In the water";
+      var pct = g ? Math.min(100, ui.timerElapsed / g * 100) : 0;
       return (
         '<section class="timer-card facet running">' +
-          '<p class="timer-label">In the water</p>' +
-          '<p class="timer-digits" id="timerDigits">' + fmtClock(ui.timerElapsed) + '</p>' +
+          '<p class="timer-label">' + label + '</p>' +
+          '<p class="timer-digits' + (ui.timerAlerted ? ' reached' : '') + '" id="timerDigits">' + fmtClock(ui.timerElapsed) + '</p>' +
+          (g ? '<div class="timer-bar"><i id="timerBar" style="width:' + pct.toFixed(1) + '%"></i></div>' : '') +
           '<button class="btn btn-stop facet" data-action="stop-timer" type="button">Stop &amp; log</button>' +
+          '<button class="btn-ghost" data-action="discard-timer" type="button">Discard</button>' +
         '</section>'
       );
     }
+    var chips = GOAL_OPTIONS.map(function(g){
+      var on = SETTINGS.goalSec === g;
+      return '<button type="button" class="goal-chip' + (on ? ' active' : '') + '" aria-pressed="' + on + '" data-action="set-goal" data-goal="' + g + '">' + goalLabel(g) + '</button>';
+    }).join("");
+    var alertChips =
+      '<button type="button" class="goal-chip' + (SETTINGS.sound ? ' active' : '') + '" aria-pressed="' + SETTINGS.sound + '" data-action="toggle-sound">Sound</button>' +
+      (canVibrate() ? '<button type="button" class="goal-chip' + (SETTINGS.vibrate ? ' active' : '') + '" aria-pressed="' + SETTINGS.vibrate + '" data-action="toggle-vibrate">Vibrate</button>' : '') +
+      '<button type="button" class="goal-chip" data-action="test-alert">Test alert</button>';
     return (
       '<section class="timer-card facet">' +
         '<p class="timer-label">Ready when you are</p>' +
-        '<p class="timer-digits idle">' + fmtClock(0) + '</p>' +
+        '<p class="timer-digits idle">' + fmtClock(SETTINGS.goalSec || 0) + '</p>' +
+        '<div class="goal-row" role="group" aria-label="Timer goal">' + chips + '</div>' +
+        '<div class="goal-row" role="group" aria-label="Goal alert">' + alertChips + '</div>' +
+        (canVibrate() ? '' : '<p class="goal-note">Vibration isn&rsquo;t available in this browser, so the goal alert is sound only.</p>') +
         '<button class="btn btn-start facet" data-action="start-timer" type="button">Start plunge</button>' +
         '<button class="btn-ghost" data-action="manual-log" type="button">Log without timer</button>' +
       '</section>'
@@ -517,6 +685,32 @@
         '<p class="stat-label">' + escapeHtml(label) + '</p>' +
         '<p class="stat-unit">' + escapeHtml(unitLabel) + '</p>' +
       '</div>'
+    );
+  }
+
+  function weeklyTpl(stats){
+    var today = new Date();
+    var dow = (today.getDay() + 6) % 7; /* Monday = 0 */
+    var count = 0, cells = "";
+    for (var i = 0; i < 7; i++){
+      var key = localDateStr(addDays(today, i - dow));
+      var active = !!stats.activeDates[key];
+      if (active) count++;
+      cells += '<span class="day-dot' + (active ? ' active' : '') + (i === dow ? ' today' : '') + '" title="' + key + '"></span>';
+    }
+    var goal = SETTINGS.weeklyGoal;
+    return (
+      '<section class="week-card facet">' +
+        '<div class="week-head">' +
+          '<div><p class="section-label">This week</p>' +
+          '<p class="week-count"><span class="stat-value">' + count + ' / ' + goal + '</span> <span class="stat-unit">days' + (count >= goal ? ' &middot; goal met' : '') + '</span></p></div>' +
+          '<div class="week-goal">' +
+            '<button type="button" data-action="weekly-goal-dec" aria-label="Lower weekly goal">&minus;</button>' +
+            '<button type="button" data-action="weekly-goal-inc" aria-label="Raise weekly goal">+</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="day-strip">' + cells + '</div>' +
+      '</section>'
     );
   }
 
@@ -790,7 +984,7 @@
 
     return (
       '<div class="sheet-overlay" data-action="close-sheet-bg">' +
-        '<div class="sheet facet" role="dialog" aria-label="Log a plunge">' +
+        '<div class="sheet facet" role="dialog" aria-modal="true" aria-label="Log a plunge">' +
           '<div class="sheet-handle"></div>' +
           '<h2 class="sheet-title">' + (isEdit ? 'Edit session' : 'Log this plunge') + '</h2>' +
           '<label class="field">' +
@@ -840,6 +1034,7 @@
         '<main class="main">' +
           timerTpl() +
           statsTpl(stats) +
+          weeklyTpl(stats) +
           dayStripTpl(stats) +
           chartTpl(STATE.sessions, ui.unit) +
           badgesTpl(stats) +
@@ -869,6 +1064,14 @@
       case "stop-timer": stopTimer(); break;
       case "manual-log": openManualLog(); break;
       case "dismiss-notice": dismissBadgeNotice(); break;
+      case "set-goal": SETTINGS.goalSec = parseInt(t.getAttribute("data-goal"), 10) || 0; saveSettings(); renderApp(); break;
+      case "toggle-sound": SETTINGS.sound = !SETTINGS.sound; saveSettings(); renderApp(); break;
+      case "toggle-vibrate": SETTINGS.vibrate = !SETTINGS.vibrate; saveSettings(); renderApp(); break;
+      case "test-alert": fireAlert(); break;
+      case "discard-timer": discardTimer(); break;
+      case "weekly-goal-dec": SETTINGS.weeklyGoal = Math.max(1, SETTINGS.weeklyGoal - 1); saveSettings(); renderApp(); break;
+      case "weekly-goal-inc": SETTINGS.weeklyGoal = Math.min(7, SETTINGS.weeklyGoal + 1); saveSettings(); renderApp(); break;
+      case "snooze-backup": SETTINGS.snoozeUntil = Date.now() + 3 * 86400000; saveSettings(); renderApp(); break;
       case "export-data": exportData(); break;
       case "import-data": document.getElementById("importFile").click(); break;
       case "edit-session": openEdit(t.getAttribute("data-id")); break;
@@ -921,6 +1124,13 @@
   });
 
   /* ---------- init ---------- */
+  document.addEventListener("keydown", function(e){
+    if (e.key === "Escape" && ui.sheet) closeSheet();
+  });
+  document.addEventListener("visibilitychange", function(){
+    if (document.visibilityState === "visible" && ui.timerRunning){ holdScreen(); tick(); }
+  });
+  resumeTimer();
   renderApp();
   if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0){
     navigator.serviceWorker.register("sw.js").catch(function(){});

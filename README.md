@@ -1,6 +1,6 @@
 # Thermocline
 
-A cold plunge / cold dip tracker. Timer, streaks, temperature trend chart, achievement badges and a session log.
+A cold plunge / cold dip tracker. Timer, streaks, temperature trend chart, achievement badges, a weekly goal, a timer goal with sound or vibration alert, and a session log.
 Plain HTML, CSS and JS: no build step, no dependencies.
 
 Data is saved in your browser (localStorage). Use **Export log** / **Import log** at the bottom of the page to back up or move it between devices.
